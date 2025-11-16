@@ -1,6 +1,9 @@
 #include <iostream>
+#include <set>
+
+#include "node.hpp"
 
 int main(int argc, char* argv[]) {
-    std::cout << "Hello, World!" << std::endl;
+    std::set<GPUNode> gpuNodes;
     return 0;
 }
