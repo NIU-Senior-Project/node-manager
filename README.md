@@ -8,6 +8,22 @@
 - 節點註冊
 - 節點資訊更新
 - 節點查詢
+
+啟動後預設監聽 `8080`，可用以下方式註冊 GPUNode：
+
+```bash
+curl -X POST http://localhost:8080/register \
+	-H "Content-Type: application/json" \
+	-d '{"ip":"10.0.0.12"}'
+```
+
+或使用 form 格式：
+
+```bash
+curl -X POST http://localhost:8080/register \
+	-H "Content-Type: application/x-www-form-urlencoded" \
+	-d "ip=10.0.0.12"
+```
 - 健康檢查
 - 資源分配
 
