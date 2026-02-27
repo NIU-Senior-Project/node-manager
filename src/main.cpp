@@ -158,16 +158,32 @@ int main(int argc, char* argv[]) {
             } else {
                 gpuNodes.insert(GPUNode(ip));
                 response = makeHttpResponse(200, "OK", "Registered: " + ip + "\n");
-
                 std::cout << "[INFO] New Node registered successfully. IP: " << ip << "\n";
             }
-        } else {
+        } else if (method == "GET" && path == "/nodes") {
+            std::ostringstream jsonArray;
+            jsonArray << "[\n";
+            bool first = true;
+            for (const auto& node : gpuNodes) {
+                if (!first) {
+                    jsonArray << ",\n";
+                }
+                jsonArray << "  \"" << node.getIpAddress() << "\"";
+                first = false;
+            }
+            jsonArray << "\n]";
+
+            response = makeHttpResponse(200, "OK", jsonArray.str());
+            std::cout << "[INFO] Node list requested. Total online nodes: " << gpuNodes.size() << "\n";
+        }
+        // 找不到路由
+        else {
             response = makeHttpResponse(404, "Not Found", "Route not found\n");
         }
 
         send(clientFd, response.data(), response.size(), 0);
         close(clientFd);
     }
-    
+
     return 0;
 }
