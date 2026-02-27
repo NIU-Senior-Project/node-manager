@@ -154,9 +154,12 @@ int main(int argc, char* argv[]) {
             const std::string ip = extractIpFromBody(body);
             if (ip.empty()) {
                 response = makeHttpResponse(400, "Bad Request", "Missing ip\n");
+                std::cout << "[WARNING] Failed registration attempt: Missing IP\n";
             } else {
                 gpuNodes.insert(GPUNode(ip));
                 response = makeHttpResponse(200, "OK", "Registered: " + ip + "\n");
+
+                std::cout << "[INFO] New Node registered successfully. IP: " << ip << "\n";
             }
         } else {
             response = makeHttpResponse(404, "Not Found", "Route not found\n");
