@@ -63,6 +63,88 @@ std::string makeHttpResponse(int code, const std::string& status, const std::str
     return response.str();
 }
 
+// 提取 JSON 字串欄位（簡易版，支援跳脫字元檢查）
+std::string extractJsonStringField(const std::string& body, const std::string& key) {
+    std::string searchKey = "\"" + key + "\"";
+    auto keyPos = body.find(searchKey);
+    if (keyPos == std::string::npos) return "";
+
+    auto colonPos = body.find(':', keyPos);
+    if (colonPos == std::string::npos) return "";
+
+    auto firstQuote = body.find('"', colonPos + 1);
+    if (firstQuote == std::string::npos) return "";
+
+    auto secondQuote = body.find('"', firstQuote + 1);
+    // 處理跳脫的雙引號 (例如 script 裡面有 \")
+    while (secondQuote != std::string::npos && body[secondQuote - 1] == '\\') {
+        secondQuote = body.find('"', secondQuote + 1);
+    }
+
+    if (secondQuote == std::string::npos) return "";
+    return body.substr(firstQuote + 1, secondQuote - firstQuote - 1);
+}
+
+// Manager 轉發請求給目標 Node (假設 Node 端監聽 8081 Port 接收任務)
+std::string forwardJobToNode(const std::string& targetIp, const std::string& payload) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return "";
+
+    sockaddr_in nodeAddr{};
+    nodeAddr.sin_family = AF_INET;
+    // 這裡我們假設 GPU Node 接收任務的 Server 開在 8081 port
+    nodeAddr.sin_port = htons(8081); 
+
+    if (inet_pton(AF_INET, targetIp.c_str(), &nodeAddr.sin_addr) <= 0) {
+        close(sock);
+        return "";
+    }
+
+    // 設定 Timeout 避免目標 Node 死機導致 Manager 卡住 (設定 5 秒)
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
+
+    if (connect(sock, reinterpret_cast<sockaddr*>(&nodeAddr), sizeof(nodeAddr)) < 0) {
+        close(sock);
+        return "";
+    }
+
+    // 將收到的 JSON 直接打包成新的 HTTP 請求發給 Node
+    std::ostringstream request;
+    request << "POST /execute HTTP/1.1\r\n"
+            << "Host: " << targetIp << ":8081\r\n"
+            << "Content-Type: application/json\r\n"
+            << "Content-Length: " << payload.size() << "\r\n"
+            << "Connection: close\r\n\r\n"
+            << payload;
+
+    std::string reqStr = request.str();
+    if (send(sock, reqStr.data(), reqStr.size(), 0) != static_cast<ssize_t>(reqStr.size())) {
+        close(sock);
+        return "";
+    }
+
+    // 讀取 Node 執行的回覆
+    std::string respStr;
+    char buffer[4096];
+    ssize_t bytesRead;
+    while ((bytesRead = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[bytesRead] = '\0';
+        respStr.append(buffer);
+    }
+    close(sock);
+
+    // 回傳 Node Response 的 Body
+    auto headerEnd = respStr.find("\r\n\r\n");
+    if (headerEnd != std::string::npos) {
+        return respStr.substr(headerEnd + 4);
+    }
+    return respStr;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -175,8 +257,29 @@ int main(int argc, char* argv[]) {
 
             response = makeHttpResponse(200, "OK", jsonArray.str());
             std::cout << "[INFO] Node list requested. Total online nodes: " << gpuNodes.size() << "\n";
+        } else if (method == "POST" && path == "/submit_job") {
+            std::string targetNode = extractJsonStringField(body, "target_node");
+            std::string script = extractJsonStringField(body, "script");
+
+            if (targetNode.empty() || script.empty()) {
+                response = makeHttpResponse(400, "Bad Request", "Missing target_node or script\n");
+                std::cout << "[ERROR] Job submission failed: Missing parameters\n";
+            } else {
+                std::cout << "[INFO] Forwarding job to Node IP: " << targetNode << "\n";
+
+                // 執行轉發
+                std::string nodeResponse = forwardJobToNode(targetNode, body);
+
+                if (nodeResponse.empty()) {
+                    response = makeHttpResponse(502, "Bad Gateway", "Failed to reach target node " + targetNode + "\n");
+                    std::cout << "[ERROR] Failed to forward job. Node " << targetNode << " is unreachable.\n";
+                } else {
+                    // 成功轉發，把 Node 的回覆包裝後傳回給送出請求的 Client
+                    response = makeHttpResponse(200, "OK", "Job Forwarded. Node replied:\n" + nodeResponse);
+                    std::cout << "[INFO] Job successfully forwarded and acknowledged by Node " << targetNode << "\n";
+                }
+            }
         }
-        // 找不到路由
         else {
             response = makeHttpResponse(404, "Not Found", "Route not found\n");
         }
