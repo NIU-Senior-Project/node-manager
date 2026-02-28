@@ -145,6 +145,80 @@ std::string forwardJobToNode(const std::string& targetIp, const std::string& pay
     return respStr;
 }
 
+// Extract query parameter from URL path
+std::string extractQueryParam(const std::string& path, const std::string& key) {
+    std::string searchKey = key + "=";
+    auto pos = path.find(searchKey);
+    if (pos == std::string::npos) return "";
+    auto start = pos + searchKey.length();
+    auto end = path.find('&', start);
+    return path.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
+// Forward job status query to the target Node
+std::pair<int, std::string> checkNodeJobStatus(const std::string& targetIp, const std::string& jobId) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return {500, "Socket error"};
+
+    sockaddr_in nodeAddr{};
+    nodeAddr.sin_family = AF_INET;
+    nodeAddr.sin_port = htons(8081);
+
+    if (inet_pton(AF_INET, targetIp.c_str(), &nodeAddr.sin_addr) <= 0) {
+        close(sock);
+        return {400, "Invalid IP"};
+    }
+
+    struct timeval tv;
+    tv.tv_sec = 2; // Shorter timeout for status polling
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
+
+    if (connect(sock, reinterpret_cast<sockaddr*>(&nodeAddr), sizeof(nodeAddr)) < 0) {
+        close(sock);
+        return {502, "Node unreachable"};
+    }
+
+    // Send status request to Node
+    std::ostringstream request;
+    request << "GET /status?id=" << jobId << " HTTP/1.1\r\n"
+            << "Host: " << targetIp << ":8081\r\n"
+            << "Connection: close\r\n\r\n";
+
+    std::string reqStr = request.str();
+    if (send(sock, reqStr.data(), reqStr.size(), 0) != static_cast<ssize_t>(reqStr.size())) {
+        close(sock);
+        return {502, "Failed to send request to Node"};
+    }
+
+    // Read Node's response
+    std::string respStr;
+    char buffer[4096];
+    ssize_t bytesRead;
+    while ((bytesRead = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[bytesRead] = '\0';
+        respStr.append(buffer);
+    }
+    close(sock);
+
+    if (respStr.empty()) return {502, "Empty response from Node"};
+
+    // Parse HTTP Status Code from Node
+    int statusCode = 500;
+    if (respStr.find("HTTP/1.1 200") != std::string::npos) statusCode = 200;
+    else if (respStr.find("HTTP/1.1 202") != std::string::npos) statusCode = 202;
+    else if (respStr.find("HTTP/1.1 404") != std::string::npos) statusCode = 404;
+
+    std::string body = "";
+    auto headerEnd = respStr.find("\r\n\r\n");
+    if (headerEnd != std::string::npos) {
+        body = respStr.substr(headerEnd + 4);
+    }
+
+    return {statusCode, body};
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -279,8 +353,24 @@ int main(int argc, char* argv[]) {
                     std::cout << "[INFO] Job successfully forwarded and acknowledged by Node " << targetNode << "\n";
                 }
             }
-        }
-        else {
+        } else if (method == "GET" && path.find("/job_status") == 0) {
+            std::string jobId = extractQueryParam(path, "id");
+            std::string targetNode = extractQueryParam(path, "node");
+
+            if (jobId.empty() || targetNode.empty()) {
+                response = makeHttpResponse(400, "Bad Request", "Missing id or node parameter\n");
+            } else {
+                auto [nodeStatus, nodeBody] = checkNodeJobStatus(targetNode, jobId);
+
+                std::string statusText = "OK";
+                if (nodeStatus == 202) statusText = "Accepted";
+                else if (nodeStatus == 404) statusText = "Not Found";
+                else if (nodeStatus == 502) statusText = "Bad Gateway";
+                else if (nodeStatus >= 500) statusText = "Server Error";
+
+                response = makeHttpResponse(nodeStatus, statusText, nodeBody);
+            }
+        } else {
             response = makeHttpResponse(404, "Not Found", "Route not found\n");
         }
 
