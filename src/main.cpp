@@ -306,7 +306,7 @@ int main(int argc, char* argv[]) {
             body.append(buffer, bytesRead);
         }
 
-        if (method == "POST" && path == "/register") {
+        if (method == "POST" && path == "/register") { // create
             const std::string ip = extractIpFromBody(body);
             if (ip.empty()) {
                 response = makeHttpResponse(400, "Bad Request", "Missing ip\n");
@@ -316,7 +316,7 @@ int main(int argc, char* argv[]) {
                 response = makeHttpResponse(200, "OK", "Registered: " + ip + "\n");
                 std::cout << "[INFO] New Node registered successfully. IP: " << ip << "\n";
             }
-        } else if (method == "GET" && path == "/nodes") {
+        } else if (method == "GET" && path == "/nodes") { // read
             std::ostringstream jsonArray;
             jsonArray << "[\n";
             bool first = true;
@@ -331,6 +331,16 @@ int main(int argc, char* argv[]) {
 
             response = makeHttpResponse(200, "OK", jsonArray.str());
             std::cout << "[INFO] Node list requested. Total online nodes: " << gpuNodes.size() << "\n";
+        } else if (method == "POST" && path == "/deregister") { // delete
+            const std::string ip = extractIpFromBody(body);
+            if (ip.empty()) {
+                response = makeHttpResponse(400, "Bad Request", "Missing ip\n");
+                std::cout << "[WARNING] Failed deregistration attempt: Missing IP\n";
+            } else {
+                gpuNodes.erase(GPUNode(ip));
+                response = makeHttpResponse(200, "OK", "Deregistered: " + ip + "\n");
+                std::cout << "[INFO] Node deregistered successfully. IP: " << ip << "\n";
+            }
         } else if (method == "POST" && path == "/submit_job") {
             std::string targetNode = extractJsonStringField(body, "target_node");
             std::string script = extractJsonStringField(body, "script");
