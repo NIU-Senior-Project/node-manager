@@ -331,6 +331,29 @@ int main(int argc, char* argv[]) {
 
             response = makeHttpResponse(200, "OK", jsonArray.str());
             std::cout << "[INFO] Node list requested. Total online nodes: " << gpuNodes.size() << "\n";
+        } else if (method == "POST" && path == "/update_status") { // update
+            const std::string ip = extractIpFromBody(body);
+            const std::string statusStr = extractJsonStringField(body, "status");
+            bool isAvailable = (statusStr == "available");
+
+            if (ip.empty() || statusStr.empty()) {
+                response = makeHttpResponse(400, "Bad Request", "Missing ip or status\n");
+                std::cout << "[WARNING] Failed status update attempt: Missing parameters\n";
+            } else {
+                auto it = gpuNodes.find(GPUNode(ip));
+                if (it != gpuNodes.end()) {
+                    GPUNode updatedNode = *it;
+                    updatedNode.updateStatus(isAvailable);
+                    gpuNodes.erase(it);
+                    gpuNodes.insert(updatedNode);
+
+                    response = makeHttpResponse(200, "OK", "Status updated for: " + ip + "\n");
+                    std::cout << "[INFO] Node status updated. IP: " << ip << ", Available: " << isAvailable << "\n";
+                } else {
+                    response = makeHttpResponse(404, "Not Found", "Node not found: " + ip + "\n");
+                    std::cout << "[WARNING] Status update failed: Node not found. IP: " << ip << "\n";
+                }
+            }
         } else if (method == "POST" && path == "/deregister") { // delete
             const std::string ip = extractIpFromBody(body);
             if (ip.empty()) {
