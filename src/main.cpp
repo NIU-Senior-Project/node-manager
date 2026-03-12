@@ -307,12 +307,17 @@ int main(int argc, char* argv[]) {
         }
 
         if (method == "POST" && path == "/register") { // create
-            const std::string ip = extractIpFromBody(body);
+            const std::string ip = extractJsonStringField(body, "ip");
+            const std::string gpuModel = extractJsonStringField(body, "gpu_model");
             if (ip.empty()) {
                 response = makeHttpResponse(400, "Bad Request", "Missing ip\n");
                 std::cout << "[WARNING] Failed registration attempt: Missing IP\n";
             } else {
-                gpuNodes.insert(GPUNode(ip));
+                if (gpuModel.empty()) {
+                    gpuNodes.insert(GPUNode(ip));
+                } else {
+                    gpuNodes.insert(GPUNode(0, ip, gpuModel)); // nodeId 預設為 0，未使用
+                }
                 response = makeHttpResponse(200, "OK", "Registered: " + ip + "\n");
                 std::cout << "[INFO] New Node registered successfully. IP: " << ip << "\n";
             }
